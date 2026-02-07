@@ -124,6 +124,8 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->num_children = 0; // initialsing the value of alive children for the process to be 0
+  p->sys_call_count = 0;//initialising the values of syscalls invoked counter to 0
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -268,6 +270,8 @@ kfork(void)
     return -1;
   }
 
+  p->num_children+=1;//incrementing the alive children of a process
+
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
@@ -314,6 +318,8 @@ reparent(struct proc *p)
 
   for(pp = proc; pp < &proc[NPROC]; pp++){
     if(pp->parent == p){
+      pp->parent->num_children-=1;
+      initproc->num_children+=1;//incrementing the count of init process as processes are adopted by init
       pp->parent = initproc;
       wakeup(initproc);
     }
@@ -327,6 +333,7 @@ void
 kexit(int status)
 {
   struct proc *p = myproc();
+  // printf("\n[debug]PID : %d syscalls invoked : %d\n",p->pid,p->sys_call_count);
 
   if(p == initproc)
     panic("init exiting");
@@ -339,6 +346,8 @@ kexit(int status)
       p->ofile[fd] = 0;
     }
   }
+
+  p->parent->num_children-=1;//decrementing the alive children of parent of the process 
 
   begin_op();
   iput(p->cwd);

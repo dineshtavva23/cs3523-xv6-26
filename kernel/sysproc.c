@@ -7,6 +7,10 @@
 #include "proc.h"
 #include "vm.h"
 
+
+extern struct spinlock wait_lock;
+extern struct proc proc[NPROC];
+
 uint64
 sys_exit(void)
 {
@@ -106,4 +110,75 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+// always prints "Hello from the kernel!" and returns 0 always
+uint64
+sys_hello(void){
+  printf("Hello from the kernel!\n");
+  return 0;
+}
+
+// returns the pid of calling process
+uint64
+sys_getpid2(void){
+  return myproc()->pid;
+}
+
+//return parent pid if it exists else -1 if no parent exists
+uint64
+sys_getppid(void){
+  struct proc *p = myproc();
+
+  acquire(&wait_lock);
+  struct proc *par = p->parent;
+  int ppid = -1;
+  if(par!=0){
+    ppid = par->pid;
+  }
+
+  release(&wait_lock);
+  return ppid;
+}
+
+//returns the number of currently alive processes of calling process.
+//Zombie processes must not be counted
+uint64
+sys_getnumchild(void){
+
+  return myproc()->num_children;
+
+}
+
+//returns the number of system calls a process has invoked
+uint64
+sys_getsyscount(void){
+  return myproc()->sys_call_count-1;
+}
+
+//returns the syscallcounter of a child process with a given pid, if not found returns -1
+uint64
+sys_getchildsyscount(void){
+  int pid;
+  argint(0,&pid);
+  struct proc *p = myproc();
+  int cnt = -1;
+  // we use wait lock to protech parent pointer
+  acquire(&wait_lock);
+  for(struct proc *it=proc;it<&proc[NPROC];it++){
+    // we use it lock to protect pid of the proces
+    acquire(&it->lock);
+
+    if(it->parent==p&&it->pid==pid){
+      cnt = it->sys_call_count;
+    }
+    release(&it->lock);
+    if(cnt!=-1){
+      return cnt;
+    }
+    
+  }
+  release(&wait_lock);
+
+  return cnt;
+
 }
