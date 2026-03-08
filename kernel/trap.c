@@ -15,6 +15,8 @@ extern char trampoline[], uservec[];
 void kernelvec();
 
 extern int devintr();
+// MLFQ TIme qunatum per level
+extern int mlfq_time_quantum[];
 
 void
 trapinit(void)
@@ -81,8 +83,30 @@ usertrap(void)
     kexit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  if(which_dev == 2){
+    //MLFQ scheduler
+
+    struct proc *p = myproc();
+    if(p&&p->state==RUNNING){
+
+      p->curr_ticks+=1;
+      p->total_ticks[p->curr_level]+=1;
+      if(p->curr_ticks>=mlfq_time_quantum[p->curr_level]){
+
+        int delta_s = p->sys_call_count-p->prev_syscall_count;
+        int delta_t = p->curr_ticks;
+        if(delta_s>=delta_t){
+          // do nothing, Interactive processes
+        }
+        else{
+          if(p->curr_level<MLFQ_LEVELS-1){
+            p->curr_level+=1;
+          }
+        }
+        yield();
+      }
+    }
+  }
 
   prepare_return();
 
@@ -152,8 +176,32 @@ kerneltrap()
   }
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0)
-    yield();
+  if(which_dev == 2 && myproc() != 0){
+    //MLFQ scheduler
+
+    struct proc *p = myproc();
+    if(p&&p->state==RUNNING){
+
+      p->curr_ticks+=1;
+      p->total_ticks[p->curr_level]+=1;
+      if(p->curr_ticks>=mlfq_time_quantum[p->curr_level]){
+
+        int delta_s = p->sys_call_count-p->prev_syscall_count;
+        int delta_t = p->curr_ticks;
+        if(delta_s>=delta_t){
+          // do nothing, Interactive processes
+        }
+        else{
+          if(p->curr_level<MLFQ_LEVELS-1){
+            p->curr_level+=1;
+          }
+        }
+
+        p->curr_ticks = 0;
+        yield();
+      }
+    }
+  }
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.

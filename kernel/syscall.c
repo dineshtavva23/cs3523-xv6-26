@@ -107,6 +107,8 @@ extern uint64 sys_getppid(void);//getppid
 extern uint64 sys_getnumchild(void);//getnumchild
 extern uint64 sys_getsyscount(void);//getsyscount
 extern uint64 sys_getchildsyscount(void);//getchildsyscount
+extern uint64 sys_getlevel(void);//getlevel
+extern uint64 sys_getmlfqinfo(void);//getmlfqinfo
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -138,6 +140,8 @@ static uint64 (*syscalls[])(void) = {
 [SYS_getnumchild] sys_getnumchild,//getnumchild
 [SYS_getsyscount] sys_getsyscount,//getsyscount
 [SYS_getchildsyscount] sys_getchildsyscount,//getchildsyscount
+[SYS_getlevel] sys_getlevel,//getlevel
+[SYS_getmlfqinfo] sys_getmlfqinfo, // getmlfqinfo
 };
 
 void

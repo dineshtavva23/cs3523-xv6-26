@@ -106,4 +106,11 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  // PA - II
+  int curr_level; // current queue level
+  int curr_ticks; // ticks consumed at current level
+  int total_ticks[MLFQ_LEVELS]; // total ticks consumed at each level
+  int prev_syscall_count; // temparory storage for computing delta_S 
+  int times_scheduled; // number of times scheduled
 };
+

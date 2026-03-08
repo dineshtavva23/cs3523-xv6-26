@@ -9,3 +9,11 @@ struct stat {
   short nlink; // Number of links to file
   uint64 size; // Size of file in bytes
 };
+
+struct mlfqinfo{
+    int level;//current queue level
+    int ticks[4];//total ticks consumed at each level
+    int times_scheduled;//number of times process has been scheduled
+    int total_syscalls;//total system calls made
+    
+};

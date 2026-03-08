@@ -6,7 +6,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "vm.h"
-
+#include "stat.h"
 
 extern struct spinlock wait_lock;
 extern struct proc proc[NPROC];
@@ -173,6 +173,7 @@ sys_getchildsyscount(void){
     }
     release(&it->lock);
     if(cnt!=-1){
+      release(&wait_lock);
       return cnt;
     }
     
@@ -180,5 +181,59 @@ sys_getchildsyscount(void){
   release(&wait_lock);
 
   return cnt;
+
+}
+//returns the current MLFQ levle of calling process
+uint64
+sys_getlevel(void){
+  return myproc()->curr_level;
+}
+
+// Retrieves detailed scheduling statistics of the process with the given PID. 
+uint64
+sys_getmlfqinfo(void){
+  int pid;
+  uint64 info_addr;
+
+  argint(0,&pid);
+
+  argaddr(1,&info_addr);
+
+  struct proc *p;
+  struct proc *candidate  =0;
+
+  // searching for the process 
+  for(p=proc;p<&proc[NPROC];p++){
+    acquire(&p->lock);
+    if(p->pid==pid&&p->state!=UNUSED){
+      candidate = p;
+      break;
+    }
+    release(&p->lock);
+  }
+
+  if(candidate == 0){
+    return -1;
+  }
+
+  struct mlfqinfo info;
+
+  // fill the struct (local)
+  info.level = candidate->curr_level;
+  info.times_scheduled = candidate->times_scheduled;
+  info.total_syscalls = candidate->sys_call_count;
+
+  for(int i=0;i<MLFQ_LEVELS;i++){
+    info.ticks[i]=candidate->total_ticks[i];
+  }
+
+  // copying to user space
+  if(copyout(myproc()->pagetable,info_addr,(char *)&info,sizeof(info))<0){
+    release(&candidate->lock);
+    return -1;
+  }
+
+  release(&candidate->lock);
+  return 0;
 
 }

@@ -17,6 +17,11 @@ struct spinlock pid_lock;
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
+// MLFQ
+int mlfq_time_quantum[MLFQ_LEVELS] = MLFQ_TIME_QUANTUM;
+
+extern struct spinlock tickslock;
+extern uint ticks;
 
 extern char trampoline[]; // trampoline.S
 
@@ -126,6 +131,16 @@ found:
   p->state = USED;
   p->num_children = 0; // initialsing the value of alive children for the process to be 0
   p->sys_call_count = 0;//initialising the values of syscalls invoked counter to 0
+
+  // MLFQ scheduler parameters
+  p->curr_level = 0;
+  p->curr_ticks = 0;
+  p->prev_syscall_count = 0;
+  p->times_scheduled = 0;
+
+  for(int i=0;i<MLFQ_LEVELS;i++){
+    p->total_ticks[i]=0;
+  }
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -422,7 +437,7 @@ kwait(uint64 addr)
     sleep(p, &wait_lock);  //DOC: wait-sleep
   }
 }
-
+//--------------------------------------------Round-Robin-Scheduler---------------------------------------------------------------
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -430,46 +445,117 @@ kwait(uint64 addr)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
+// void
+// scheduler(void)
+// {
+//   struct proc *p;
+//   struct cpu *c = mycpu();
+
+//   c->proc = 0;
+//   for(;;){
+//     // The most recent process to run may have had interrupts
+//     // turned off; enable them to avoid a deadlock if all
+//     // processes are waiting. Then turn them back off
+//     // to avoid a possible race between an interrupt
+//     // and wfi.
+//     intr_on();
+//     intr_off();
+
+//     int found = 0;
+//     for(p = proc; p < &proc[NPROC]; p++) {
+//       acquire(&p->lock);
+//       if(p->state == RUNNABLE) {
+//         // Switch to chosen process.  It is the process's job
+//         // to release its lock and then reacquire it
+//         // before jumping back to us.
+//         p->state = RUNNING;
+//         c->proc = p;
+//         swtch(&c->context, &p->context);
+
+//         // Process is done running for now.
+//         // It should have changed its p->state before coming back.
+//         c->proc = 0;
+//         found = 1;
+//       }
+//       release(&p->lock);
+//     }
+//     if(found == 0) {
+//       // nothing to run; stop running on this core until an interrupt.
+//       asm volatile("wfi");
+//     }
+//   }
+// }
+
+//-----------------------------------MLFQ-Scheduler-----------------------------------------------------------------------------
 void
-scheduler(void)
-{
-  struct proc *p;
-  struct cpu *c = mycpu();
+scheduler(void){
+    struct proc *p;
+    struct cpu *c = mycpu();
 
-  c->proc = 0;
-  for(;;){
-    // The most recent process to run may have had interrupts
-    // turned off; enable them to avoid a deadlock if all
-    // processes are waiting. Then turn them back off
-    // to avoid a possible race between an interrupt
-    // and wfi.
-    intr_on();
-    intr_off();
+    static int last_boot = 0;
+    c->proc = 0;
+    for(;;){
+      intr_on();
+      intr_off();
 
-    int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
+
+      // priority boost of all processes after every BOOST_TICKS
+      acquire(&tickslock);
+      if(ticks-last_boot>=BOOST_TICKS){
+        last_boot = ticks;
+        for(p=proc;p<&proc[NPROC];p++){
+          acquire(&p->lock);
+          if(p->state==RUNNABLE||p->state == RUNNING){
+            p->curr_level = 0;
+            p->curr_ticks = 0;
+          }
+          release(&p->lock);
+        }
       }
-      release(&p->lock);
+      release(&tickslock);
+
+
+      int found = 0;
+      for(int i=0;i<MLFQ_LEVELS;i++){
+        for(p=proc;p<&proc[NPROC];p++){
+          acquire(&p->lock);
+          if(p->state==RUNNABLE&&p->curr_level==i){
+            p->times_scheduled+=1;
+            p->prev_syscall_count = p->sys_call_count;
+            p->curr_ticks =0;
+            
+            p->state = RUNNING;
+            c->proc = p;
+
+            swtch(&c->context,&p->context);
+
+            c->proc =0;
+            found = 1;
+
+          }
+          release(&p->lock);
+          // found a process at this level, start again from 0 
+          if(found){
+            break;
+          }
+
+        }
+        // starting the search from level 0 
+        if(found){
+          break;
+        }
+        
+      }
+      if(found==0){
+        asm volatile("wfi");
+      }
+
+
     }
-    if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
-      asm volatile("wfi");
-    }
-  }
+  
 }
+
 
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores
