@@ -2,55 +2,84 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 
+/*
+============================================================
+SC-MLFQ Experimental Evaluation Program
+============================================================
+
+This program evaluates the behavior of the SC-MLFQ scheduler
+under three workloads:
+
+1. CPU-bound process
+   Expected: gradual demotion to lower queues.
+
+2. Syscall-heavy process
+   Expected: remain in higher queues due to frequent syscalls.
+
+3. Mixed workload
+   Expected: remain in intermediate queues.
+
+Scheduler statistics are periodically printed using
+getmlfqinfo().
+============================================================
+*/
 
 /* ---------------- CPU BOUND ----------------
    Pure computation with no syscalls.
-   Should gradually move to lower queues.
+   Expected behaviour:
+   Level 0 → Level 1 → Level 2 → Level 3
 */
-void cpu_bound() {
+void cpu_bound(){
   volatile int x = 0;
 
-  while (1) {
-    for (int i = 0; i < 10000000; i++)
-      x += i;
+  while(1){
+    for(int i=0;i <10000000;i++){
+      x +=i;
+    }
   }
 }
 
 /* ---------------- SYSCALL HEAVY ----------------
-   Makes many syscalls.
-   Should remain in higher priority queues.
+   Repeated system calls.
+   Expected behaviour:
+   Process remains at high priority.
 */
-void syscall_heavy() {
-  while (1) {
-    for (int i = 0; i < 1000; i++)
+void syscall_heavy(){
+  while(1){
+    for(int i=0;i<1000;i++){
       getpid();
+    }
   }
 }
 
 /* ---------------- MIXED WORKLOAD ----------------
-   Alternates CPU and syscalls.
-   Should settle in middle queues.
+   Alternates CPU work and syscalls.
+   Expected behaviour:
+   Intermediate queue levels.
 */
 void mixed_workload() {
   volatile int x = 0;
-
-  while (1) {
-    /* CPU phase */
-    for (int i = 0; i < 5000000; i++)
+  while(1){
+    for(int i =0;i<5000000;i++){
       x++;
+    }
 
-    /* syscall phase */
-    for (int i = 0; i < 200; i++)
+    for(int i=0;i<200;i++){
       getpid();
+    }
   }
 }
 
-/* ----------- Print scheduler stats ----------- */
-void print_stats(int pid) {
-  struct mlfqinfo info;
 
-  if (getmlfqinfo(pid, &info) == 0) {
-    printf("PID %d: Level=%d | Ticks=[%d %d %d %d] | Scheduled=%d | Syscalls=%d\n",
+/* ---------- Print formatted statistics ---------- */
+void print_stats(int pid){
+
+  struct mlfqinfo info;
+  if (getmlfqinfo(pid, &info) == 0){
+
+    printf("PID:%d | Level:%d | "
+           "Ticks[L0:%d L1:%d L2:%d L3:%d] | "
+           "Scheduled:%d | Syscalls:%d\n",
            pid,
            info.level,
            info.ticks[0],
@@ -62,49 +91,65 @@ void print_stats(int pid) {
   }
 }
 
+
 /* ---------------- MAIN TEST ---------------- */
-int main() {
 
+int main(void){
   int pids[3];
-  char *names[] = {"CPU-BOUND", "SYSCALL-HEAVY", "MIXED"};
 
-  /* spawn processes */
-  for (int i = 0; i < 3; i++) {
-    int pid = fork();
+  char *names[]={
+    "CPU-BOUND",
+    "SYSCALL-HEAVY",
+    "MIXED"
+  };
 
-    if (pid == 0) {
-      if (i == 0)
+  printf("\n--------------------------------------------\n");
+  printf(" SC-MLFQ Scheduler Experimental Evaluation\n");
+  printf("---------------------------------------------\n\n");
+
+
+  /* Spawn processes */
+  for (int i =0;i<3;i++){
+
+    int pid =fork();
+
+    if (pid ==0){
+      if(i==0){
         cpu_bound();
-      else if (i == 1)
+      }
+      else if(i==1){
         syscall_heavy();
-      else
+      }
+      else{
         mixed_workload();
-
+      }
       exit(0);
     }
-
-    pids[i] = pid;
+    pids[i] =pid;
   }
 
-  /* monitor behaviour */
-  for (int t = 0; t < 15; t++) {
 
-    pause(50);   // allow scheduler to run
+  /* Monitor scheduler behaviour */
 
-    printf("\n========== INTERVAL %d ==========\n", t);
-
-    for (int i = 0; i < 3; i++) {
-      printf("%s -> ", names[i]);
+  for (int t =0;t<15;t++){
+    pause(50);
+    printf("\n------------------------------\n");
+    printf("Measurement Interval %d\n", t);
+    printf("------------------------------\n");
+    for (int i=0;i<3;i++){
+      printf("%s -> ",names[i]);
       print_stats(pids[i]);
     }
   }
 
-  /* kill children */
-  for (int i = 0; i < 3; i++)
+
+  /* Terminate child processes */
+  for (int i = 0;i<3;i++){
     kill(pids[i]);
-
-  for (int i = 0; i < 3; i++)
+  }
+  for(int i =0;i<3;i++){
     wait(0);
-
+  }
+  printf("\nExperiment completed.\n");
   exit(0);
 }

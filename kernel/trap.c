@@ -103,6 +103,8 @@ usertrap(void)
             p->curr_level+=1;
           }
         }
+
+        p->curr_ticks = 0;
         yield();
       }
     }

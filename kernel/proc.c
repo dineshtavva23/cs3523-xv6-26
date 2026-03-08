@@ -493,6 +493,7 @@ scheduler(void){
     struct cpu *c = mycpu();
 
     static int last_boot = 0;
+    static int last_idx = 0;
     c->proc = 0;
     for(;;){
       intr_on();
@@ -518,15 +519,19 @@ scheduler(void){
 
       int found = 0;
       for(int i=0;i<MLFQ_LEVELS;i++){
-        for(p=proc;p<&proc[NPROC];p++){
+
+        for(int offset=0;offset<NPROC;offset++){
+          int index = (last_idx+offset)%NPROC;
+          p = &proc[index];
           acquire(&p->lock);
           if(p->state==RUNNABLE&&p->curr_level==i){
             p->times_scheduled+=1;
             p->prev_syscall_count = p->sys_call_count;
-            p->curr_ticks =0;
+            // p->curr_ticks =0;
             
             p->state = RUNNING;
             c->proc = p;
+            last_idx = (index+1)%NPROC;
 
             swtch(&c->context,&p->context);
 

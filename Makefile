@@ -150,9 +150,6 @@ UPROGS=\
 	$U/_fork_syscount\
 	$U/_syscount\
 	$U/_mlfq_test\
-	$U/_syscall_test\
-	$U/_boost_test\
-	$U/_cpu_test\
 	$U/_test\
 
 fs.img: mkfs/mkfs README $(UPROGS)
