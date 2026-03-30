@@ -151,6 +151,10 @@ UPROGS=\
 	$U/_syscount\
 	$U/_mlfq_test\
 	$U/_test\
+	$U/_PA2_1\
+	$U/_PA2_2\
+	$U/_PA2_3\
+
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
