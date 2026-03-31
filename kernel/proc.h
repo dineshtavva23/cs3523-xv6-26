@@ -112,5 +112,20 @@ struct proc {
   int total_ticks[MLFQ_LEVELS]; // total ticks consumed at each level
   int prev_syscall_count; // temparory storage for computing delta_S 
   int times_scheduled; // number of times scheduled
+
+  // PA III
+  int page_faults;
+  int pages_evicted;
+  int resident_pages;
+  int pages_swapped_in;
+  int pages_swapped_out;
 };
 
+
+struct vmstats{
+  int page_faults;
+  int pages_evicted;
+  int resident_pages;
+  int pages_swapped_in;
+  int pages_swapped_out;
+};

@@ -59,6 +59,12 @@ void            ireclaim(int);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+void            assign_frame(void *pa,struct proc *p,uint64 va);
+int             swap_out(struct proc *owner,uint64 va,char *page_data);
+int             swap_in(struct proc *owner,uint64 va,char *target_page_data);
+void            free_process_swap(struct proc *owner);
+void*           evict_frame(void);
+int             swap_read(struct proc *owner,uint64 va,char *target_page_data);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -159,7 +165,7 @@ int             mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
 uint64          uvmalloc(pagetable_t, uint64, uint64, int);
 uint64          uvmdealloc(pagetable_t, uint64, uint64);
-int             uvmcopy(pagetable_t, pagetable_t, uint64);
+int             uvmcopy(pagetable_t, pagetable_t, uint64,struct proc *);
 void            uvmfree(pagetable_t, uint64);
 void            uvmunmap(pagetable_t, uint64, uint64, int);
 void            uvmclear(pagetable_t, uint64);
@@ -170,6 +176,7 @@ int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, int);
+pte_t*          get_pte(pagetable_t,uint64);
 
 // plic.c
 void            plicinit(void);

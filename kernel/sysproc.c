@@ -237,3 +237,42 @@ sys_getmlfqinfo(void){
   return 0;
 
 }
+
+// retrieves vmstats of a process
+uint64
+sys_getvmstats(void){
+  int pid;
+  uint64 addr;
+
+  argint(0,&pid);
+  argaddr(1,&addr);
+
+  struct proc *p;
+  struct proc *candidate =0;
+
+  for(p=proc;p<&proc[NPROC];p++){
+    acquire(&p->lock);
+    if(pid==p->pid&&p->state!=UNUSED){
+      candidate=p;
+      break;
+    }
+    release(&p->lock);
+  }
+  if(candidate==0){
+    return -1;
+  }
+  struct vmstats stats;
+
+  stats.page_faults = candidate->page_faults;
+  stats.pages_swapped_in = candidate->pages_swapped_in;
+  stats.pages_swapped_out = candidate->pages_swapped_out;
+  stats.resident_pages = candidate->resident_pages;
+  stats.pages_evicted = candidate->pages_evicted;
+
+  if(copyout(myproc()->pagetable,addr,(char *)&stats,sizeof(stats))<0){
+    release(&candidate->lock);
+    return -1;
+  }
+  release(&candidate->lock);
+  return 0;
+}

@@ -294,7 +294,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
 int
-uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+uvmcopy(pagetable_t old, pagetable_t new, uint64 sz,struct proc *np)
 {
   pte_t *pte;
   uint64 pa, i;
@@ -304,8 +304,31 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       continue;   // page table entry hasn't been allocated
-    if((*pte & PTE_V) == 0)
-      continue;   // physical page hasn't been allocated
+    if((*pte & PTE_V) == 0){
+      if((*pte&PTE_S)){
+        // parents memory is in the swapped state
+        // pull out of swap into memory
+        if((mem=(char*)kalloc())==0){
+          goto err;
+        }
+        // use swap_read as we shoudl not delte the parent's swap slot
+        if(swap_read(myproc(),i,mem)==0){
+          panic("uvmcopy: parent swap page is not found");
+        }
+        // mpa the page in the childs page table
+        if(mappages(new,i,PGSIZE,(uint64)mem,PTE_FLAGS(*pte))!=0){
+          kfree(mem);
+          goto err;
+        }
+        // update the stats and register new frame
+        np->resident_pages++;
+        assign_frame((void *)mem,np,i);
+        continue;
+      // continue;   // physical page hasn't been allocated
+      }
+      // if its invalid and not swapped, continue
+      continue;
+    }
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -455,16 +478,48 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
   uint64 mem;
   struct proc *p = myproc();
 
+  p->page_faults++; // increasing the page_faults 
+
   if (va >= p->sz)
     return 0;
   va = PGROUNDDOWN(va);
   if(ismapped(pagetable, va)) {
     return 0;
   }
+  // check if page is in swap space
+  pte_t *pte = get_pte(pagetable,va);
+  if(pte&&(*pte & PTE_S)){
+    // swap page fault
+    //allocate a new frame
+    mem = (uint64)kalloc();
+    if(mem==0){
+      return 0;
+    }
+    //restore the data from swap space
+    if(swap_in(p,va,(char *)mem)==0){
+      panic("Error! PTE_S is set but page not found in swap space");
+    }
+
+    // update stats and assign the frame
+    p->resident_pages++;
+    assign_frame((void *)mem,p,va);
+
+    // update the PTE
+
+    *pte = (*pte&(~PTE_S));
+    *pte = (PA2PTE(mem)|PTE_V|PTE_R|PTE_W|PTE_U);// set permission and valid bits
+
+    p->pages_swapped_in++;
+
+    return mem;
+  }
+  // if not in swap, normal page fault
   mem = (uint64) kalloc();
   if(mem == 0)
     return 0;
   memset((void *) mem, 0, PGSIZE);
+  p->resident_pages++;
+  assign_frame((void *)mem,p,va);
   if (mappages(p->pagetable, va, PGSIZE, mem, PTE_W|PTE_U|PTE_R) != 0) {
     kfree((void *)mem);
     return 0;
@@ -483,4 +538,9 @@ ismapped(pagetable_t pagetable, uint64 va)
     return 1;
   }
   return 0;
+}
+
+// to fetch PTE from a vitual address
+pte_t* get_pte(pagetable_t pagetable,uint64 va){
+  return walk(pagetable,va,0);
 }

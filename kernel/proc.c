@@ -142,6 +142,13 @@ found:
     p->total_ticks[i]=0;
   }
 
+  // PA 3, stats
+  p->page_faults=0;
+  p->pages_evicted=0;
+  p->resident_pages=0;
+  p->pages_swapped_in=0;
+  p->pages_swapped_out=0;
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -172,6 +179,7 @@ found:
 static void
 freeproc(struct proc *p)
 {
+  free_process_swap(p);//free the swap slots
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
@@ -288,7 +296,7 @@ kfork(void)
   p->num_children+=1;//incrementing the alive children of a process
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  if(uvmcopy(p->pagetable, np->pagetable, p->sz,np) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
