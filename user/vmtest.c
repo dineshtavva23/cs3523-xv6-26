@@ -32,7 +32,7 @@ int main() {
   
   // 1. Allocate 1500 pages (Approx 6MB of memory). 
   // With an 8MB PHYSTOP, this will absolutely exhaust physical memory and trigger Swapping!
-  int num_pages = 1500;
+  int num_pages = 500;
   uint64 size = num_pages * 4096;
   
   printf("Target: Allocating %d bytes (%d pages)...\n", (int)size, num_pages);
@@ -74,15 +74,15 @@ int main() {
   if (child_pid == 0) {
      int cpid = getpid();
      // Child process: Burn CPU to drop to lowest MLFQ priority!
-     for(volatile int j = 0; j < 50000000; j++) {} 
+     for(volatile int j = 0; j < 5000000; j++) {} 
      
      printf("Child dropped in priority. Allocating massive memory block...\n");
-     char *child_mem = sbrk(1000 * 4096);
+     char *child_mem = sbrk(400 * 4096);
      
      // Write to it to force it into RAM. 
      // Because the child is low priority, Clock algorithm will victimize 
      // the child's own pages over the sleeping parent's pages!
-     for(int i = 0; i < 1000; i++) {
+     for(int i = 0; i < 400; i++) {
        child_mem[i * 4096] = 'Z';
      }
      
