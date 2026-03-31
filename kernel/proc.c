@@ -269,9 +269,11 @@ growproc(int n)
     if(sz + n > TRAPFRAME) {
       return -1;
     }
-    if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
-      return -1;
-    }
+    // just bump the size do not call uvmalloc
+    sz = sz+n;
+    // if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
+    //   return -1;
+    // }
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
