@@ -154,6 +154,7 @@ UPROGS=\
 	$U/_PA2_1\
 	$U/_PA2_2\
 	$U/_PA2_3\
+	$U/_vmtest\
 
 
 fs.img: mkfs/mkfs README $(UPROGS)
