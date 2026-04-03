@@ -226,47 +226,65 @@ void* evict_frame(){
   int victim_idx = -1;
   int least_priority = -1;
 
+  int num_scanned = 0;
+
   // find the victim
-  while(victim_idx==-1){
-    for(int i=0;i<NFRAMES;i++){
-      int j = clock_hand;
-      clock_hand = (clock_hand+1)%NFRAMES;
+  while(1){  
+    int j = clock_hand;
+    clock_hand = (clock_hand+1)%NFRAMES;
 
-      // consider the frames in user process
-      if(frame_table.frames[j].in_use==1&&frame_table.frames[j].owner!=0){
-        pte_t *pte = get_pte(frame_table.frames[j].owner->pagetable,frame_table.frames[j].va);
+    num_scanned++;
 
-        if(pte&&(*pte & PTE_V)){
-          if((*pte&PTE_A)){
-            // accesses recently, clear the bit 
-            *pte = (*pte&(~PTE_A));
+    // consider the frames in user process
+    if(frame_table.frames[j].in_use==1&&frame_table.frames[j].owner!=0){
+      pte_t *pte = get_pte(frame_table.frames[j].owner->pagetable,frame_table.frames[j].va);
+
+      if(pte&&(*pte & PTE_V)){
+        if((*pte&PTE_A)){
+          // accesses recently, clear the bit 
+          *pte = (*pte&(~PTE_A));
             
-          }else{
-            // not accesses recently, candidate for eviction
-            // check priority
-            int proc_level = frame_table.frames[j].owner->curr_level;
+        }else{
+          // not accesses recently, candidate for eviction
+          // check priority
+          int proc_level = frame_table.frames[j].owner->curr_level;
 
-            if(victim_idx==-1||proc_level>least_priority){
-              victim_idx = j;
-              least_priority = proc_level;
+          if(victim_idx==-1||proc_level>least_priority){
+            victim_idx = j;
+            least_priority = proc_level;
+
+            if(proc_level==3){// MLFQ_LEVELs-1
+              break;
             }
           }
         }
       }
     }
+    
+    //if we have num_scanned all frames at 
+    // least once above and found victim, stop
+    if (num_scanned>=NFRAMES && victim_idx!=-1) {
+      break;
+    }
 
 
   }
+
+  // update the clock to point to right after the victim to satify clock algorithm
+  clock_hand = (victim_idx + 1) % NFRAMES;
 
   // we found the victim
   struct frame *f = &frame_table.frames[victim_idx];
 
   struct proc *owner = f->owner;
   uint64 pa =f->pa;
+
   uint64 va = f->va;
 
   // mar the pte as swapped
+  
   pte_t *pte = get_pte(owner->pagetable,va);
+  
   *pte = ((*pte)&(~PTE_V)); // unset the valid bit
   *pte = ((*pte)|(PTE_S));//set the swapped bit
 
@@ -284,6 +302,7 @@ void* evict_frame(){
   f->in_use=0;
   f->owner=0;
   f->va=0;
+
   f->pa=0;
 
   //fill memory with junk
@@ -296,9 +315,14 @@ void* evict_frame(){
 int swap_read(struct proc *owner, uint64 va, char *target_page_data){
   acquire(&swap_table.lock);
   for(int i=0;i<MAX_SWAP_PAGES;i++){
+
+
+    
     if(swap_table.slots[i].in_use==1&&swap_table.slots[i].owner==owner&&swap_table.slots[i].va==va){
+
       memmove(target_page_data,swap_table.slots[i].page,PGSIZE);
       release(&swap_table.lock);
+    
       return 1;//found
     }
 

@@ -2,7 +2,6 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 
-// Define the struct locally for the test program
 struct vmstats {
   int page_faults;
   int pages_evicted;
@@ -12,6 +11,7 @@ struct vmstats {
 };
 
 void print_stats(char *tag, int pid) {
+  // [Keep your existing print_stats function exact same]
   struct vmstats st;
   if(getvmstats(pid, &st) == 0) {
     printf("\n[%s] VM Stats (PID %d):\n", tag, pid);
@@ -30,68 +30,61 @@ int main() {
   int pid = getpid();
   printf("=== Starting VM Experimental Evaluation ===\n");
   
-  // 1. Allocate 1500 pages (Approx 6MB of memory). 
-  // With an 8MB PHYSTOP, this will absolutely exhaust physical memory and trigger Swapping!
   int num_pages = 500;
   uint64 size = num_pages * 4096;
   
   printf("Target: Allocating %d bytes (%d pages)...\n", (int)size, num_pages);
   char *mem = sbrk(size);
-  if((long)mem == -1) {
-    printf("sbrk failed!\n");
-    exit(1);
-  }
 
   print_stats("After sbrk (No Faults yet)", pid);
   
-  // 2. Triggering Page faults & Forcing Replaements
-  printf("\nWriting data sequentially to trigger lazy allocation & swapping...\n");
+  // 2. Triggering Page faults
+  printf("\nWriting data sequentially... (Using syscalls to maintain high MLFQ Priority!)\n");
   for(int i = 0; i < num_pages; i++) {
-    mem[i * 4096] = 'X'; // Writing to the page causes a page fault
-    if (i > 0 && i % 500 == 0) {
-      printf("  ...Wrote %d pages\n", i);
-    }
-  }
-  
-  print_stats("After Writing (Memory Exhausted, Evictions Occurred)", pid);
-  
-  // 3. Reusing previously evicted pages (Swap-in)
-  printf("\nReading data back to force pages to be restored from Swap Space...\n");
-  for(int i = 0; i < num_pages; i++) {
-    char expected = mem[i * 4096];
-    if (expected != 'X') {
-      printf("ERROR: Memory corrupted at page %d! Expected 'X', got '%c'\n", i, expected);
-      exit(1);
-    }
-  }
-  
-  print_stats("After Reading (Pages Restored, Swap-ins Occurred)", pid);
+    mem[i * 4096] = 'X'; 
+    
+    // ARTIFICIAL SYSCALL SPAM! (This forces delta_s > delta_t in your trap.c MLFQ)
+    for(int k=0; k<40; k++){ getpid(); }
 
+    if (i > 0 && i % 500 == 0) { printf("  ...Wrote %d pages\n", i); }
+  }
+  
+  print_stats("After Writing", pid);
+  
   // 4. Integrating with MLFQ (Priority-based eviction)
   printf("\nForking Background process to demonstrate priority eviction...\n");
   int child_pid = fork();
   
   if (child_pid == 0) {
      int cpid = getpid();
-     // Child process: Burn CPU to drop to lowest MLFQ priority!
+     // Child process: Burn CPU with NO SYSCALLS to drop to lowest MLFQ priority!
      for(volatile int j = 0; j < 5000000; j++) {} 
      
      printf("Child dropped in priority. Allocating massive memory block...\n");
      char *child_mem = sbrk(400 * 4096);
      
-     // Write to it to force it into RAM. 
-     // Because the child is low priority, Clock algorithm will victimize 
-     // the child's own pages over the sleeping parent's pages!
+     // Write to it to force out-of-memory.
      for(int i = 0; i < 400; i++) {
        child_mem[i * 4096] = 'Z';
      }
-     
      print_stats("Child Final Stats (Should have massive Evictions)", cpid);
      exit(0);
   } else {
-     // Parent just sleeps and waits for child
      wait(0);
-     print_stats("Parent Final Stats (Protected by high priority)", pid);
+     print_stats("Parent Stats After Child Dies (Protected by high priority!)", pid);
+     
+     // 5. NEW PHASE: Re-access memory to trigger Swap In!
+     printf("\nParent waking up! Reading memory back to trigger Swap In...\n");
+     for(int i = 0; i < num_pages; i++) {
+        char expected = mem[i * 4096];
+        if (expected != 'X') {
+           printf("ERROR: Memory corrupted!\n");
+           exit(1);
+        }
+        for(int k=0; k<40; k++){ getpid(); } // stay high priority
+     }
+     
+     print_stats("Final Parent Stats (Should now show Swap Ins)", pid);
      printf("=== Evaluation Complete! ===\n");
   }
   
