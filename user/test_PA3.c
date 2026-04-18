@@ -1,5 +1,6 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
+
 #include "user/user.h"
 
 struct vmstats{
@@ -18,30 +19,36 @@ void print_stats(char *tag, int pid){
     printf("  Evicted:     %d\n", st.pages_evicted);
     printf("  Resident:    %d\n", st.resident_pages);
     printf("  Swapped Out: %d\n", st.pages_swapped_out);
+
+    
     printf("  Swapped In:  %d\n", st.pages_swapped_in);
     printf("####################################\n");
   }else{
-   
-    printf("Could not get stats for PID %d\n", pid);
+    
+    printf("Could not get stats for PID %d\n",pid);
   }
 }
 
 int main(){
   int pid =getpid();
+  
   printf("Starting VM Experimental Evaluation\n");
+  
   
   int num_pages =500;
   uint64 size= num_pages* 4096;
   
+  
   printf("Target: Allocating %d bytes (%d pages)\n",(int)size,num_pages);
+  
   char *mem =sbrk(size);
 
-  print_stats("After sbrk (No Faults yet)", pid);
+  print_stats("After sbrk (No Faults yet)",pid);
   
   printf("\nWriting data sequentially (Using syscalls to maintain high MLFQ Priority!)\n");
+  
   for(int i=0;i<num_pages;i++){
-    mem[i * 4096] = 'X'; 
- 
+    mem[i*4096] ='X'; 
     for(int k=0;k<40;k++){ 
       getpid(); 
 
@@ -49,7 +56,7 @@ int main(){
     }
 
     if(i>0&&i%500==0){ 
-      printf("  ...Wrote %d pages\n", i); 
+      printf("  ...Wrote %d pages\n",i); 
 
     }
   }
@@ -62,7 +69,7 @@ int main(){
   if(child_pid==0){
     int cpid =getpid();
      
-    for(volatile int j=0;j<5000000; j++){} 
+    for(volatile int j=0;j<5000000;j++){} 
      
     printf("Child dropped in priority. Allocating massive memory block\n");
     char *child_mem = sbrk(400*4096);
@@ -70,13 +77,13 @@ int main(){
     for(int i =0;i<400;i++){
       child_mem[i*4096] ='Z';
     }
-    print_stats("Child Final Stats (Should have massive Evictions)", cpid);
+    print_stats("Child Final Stats (Should have massive Evictions)",cpid);
     exit(0);
   }else{
     wait(0);
-    print_stats("Parent Stats After Child Dies (Protected by high priority!)", pid);
+    print_stats("Parent Stats After Child Dies (Protected by high priority!)",pid);
      
-    printf("\nParent waking up! Reading memory back to trigger Swap In...\n");
+    printf("\nParent waking up! Reading memory back to trigger Swap In\n");
     for(int i=0;i<num_pages;i++){
       char expected = mem[i*4096];
       
@@ -93,8 +100,8 @@ int main(){
 
     }
      
-    print_stats("Final Parent Stats (Should now show Swap Ins)", pid);
-    printf("Evaluation Complete! \n");
+    print_stats("Final Parent Stats (Should now show Swap Ins)",pid);
+    printf("Evaluation Complete.\n");
   }
   
   exit(0);
