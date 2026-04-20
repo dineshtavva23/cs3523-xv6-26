@@ -8,5 +8,9 @@ struct buf {
   struct buf *prev; // LRU cache list
   struct buf *next;
   uchar data[BSIZE];
+
+  struct buf *qnext; // disk scheduling queue
+  struct proc *p;// pointer to the process that requested this disk I/O
+  int is_write;//1 if write else 0 if read
 };
 

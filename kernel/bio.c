@@ -22,6 +22,7 @@
 #include "defs.h"
 #include "fs.h"
 #include "buf.h"
+#include "proc.h"
 
 struct {
   struct spinlock lock;
@@ -68,6 +69,7 @@ bget(uint dev, uint blockno)
       b->refcnt++;
       release(&bcache.lock);
       acquiresleep(&b->lock);
+      b->p= myproc();
       return b;
     }
   }
@@ -82,6 +84,7 @@ bget(uint dev, uint blockno)
       b->refcnt = 1;
       release(&bcache.lock);
       acquiresleep(&b->lock);
+      b->p =myproc();
       return b;
     }
   }

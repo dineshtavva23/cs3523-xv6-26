@@ -10,6 +10,7 @@
 
 extern struct spinlock wait_lock;
 extern struct proc proc[NPROC];
+int disk_sched_policy = 0; // 0 for FCFS and 1 for SSTF
 
 uint64
 sys_exit(void)
@@ -227,13 +228,13 @@ sys_getmlfqinfo(void){
     info.ticks[i]=candidate->total_ticks[i];
   }
 
+  release(&candidate->lock);
   // copying to user space
   if(copyout(myproc()->pagetable,info_addr,(char *)&info,sizeof(info))<0){
-    release(&candidate->lock);
     return -1;
   }
 
-  release(&candidate->lock);
+  // release(&candidate->lock);
   return 0;
 
 }
@@ -262,17 +263,39 @@ sys_getvmstats(void){
     return -1;
   }
   struct vmstats stats;
+  memset(&stats, 0,sizeof(stats));
 
   stats.page_faults = candidate->page_faults;
   stats.pages_swapped_in = candidate->pages_swapped_in;
   stats.pages_swapped_out = candidate->pages_swapped_out;
   stats.resident_pages = candidate->resident_pages;
   stats.pages_evicted = candidate->pages_evicted;
+  
+  // PA 4 stats
+  stats.disk_reads =candidate->disk_reads;
+  stats.disk_writes =candidate->disk_writes;
+  if(candidate->disk_reads+candidate->disk_writes>0){
+    stats.avg_disk_latency =candidate->total_disk_latency/(candidate->disk_reads+candidate->disk_writes);
+  }else{
+    stats.avg_disk_latency =0;
+  }
 
+  release(&candidate->lock);
   if(copyout(myproc()->pagetable,addr,(char *)&stats,sizeof(stats))<0){
-    release(&candidate->lock);
     return -1;
   }
-  release(&candidate->lock);
+  return 0;
+}
+
+//sets the disk_sched_policy => 0 for FCFS and 1 for SSTF
+uint64
+sys_setdisksched(void){
+  int policy;
+  argint(0,&policy);
+  if(policy!=0&&policy!=1){
+    //invalid input
+    return -1;
+  }
+  disk_sched_policy= policy;
   return 0;
 }

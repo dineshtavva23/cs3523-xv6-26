@@ -9,11 +9,19 @@
 #include "riscv.h"
 #include "defs.h"
 #include "proc.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "buf.h"
 
 #define NFRAMES ((PHYSTOP-KERNBASE)/PGSIZE) //as memory spans from KERNBASE to PHYSTOP
 #define MAX_SWAP_PAGES 1024
 
+#define SWAP_START_BLOCK 10000
+#define VDISK_SIZE 2000 //capacity of each virtual disk
 void freerange(void *pa_start, void *pa_end);
+
+// For testing RAID
+int simulated_failed_disk=1;
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
@@ -45,7 +53,7 @@ struct swap_slot{
   int in_use;
   struct proc *owner;
   uint64 va;
-  char page[PGSIZE];
+  // char page[PGSIZE]; PA 4 modification 
 };
 
 struct{
@@ -162,48 +170,184 @@ void assign_frame(void *pa,struct proc *p,uint64 va){
   release(&frame_table.lock);
 }
 
-// when a frame gets evicted we need to find a frees slot in the swap table
-// to store the page
-int swap_out(struct proc *owner, uint64 va, char *page_data){
+
+
+int swap_out(struct proc *owner,uint64 va,char *page_data){
   acquire(&swap_table.lock);
+  int slot=-1;
   for(int i=0;i<MAX_SWAP_PAGES;i++){
     if(swap_table.slots[i].in_use==0){
       swap_table.slots[i].in_use=1;
-      swap_table.slots[i].owner = owner;
-      swap_table.slots[i].va = va;
-
-      // copy the page data
-      memmove(swap_table.slots[i].page,page_data,PGSIZE);
-      release(&swap_table.lock);
-      return i;// swap index
+      swap_table.slots[i].owner=owner;
+      swap_table.slots[i].va=va;
+      slot=i;
+      break;
     }
   }
 
   release(&swap_table.lock);
-  panic("Swap space full"); // if no space is left
+  if(slot==-1){
+    panic("Swap space full");
+  }
 
-  return -1;
+  //RAID 0
+  // int start_logical_block=slot*4;
+  // for(int i=0;i<4;i++){
+  //   int b = start_logical_block+i;
+  //   int disk_id=b%4;
+  //   int disk_block =b/4;
+  //   int physical_block=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+disk_block;
+
+  //   struct buf *buf=bread(1,physical_block);//dev=1;
+  //   memmove(buf->data,page_data+(i*BSIZE),BSIZE);
+  //   bwrite(buf);
+  //   brelse(buf);
+  // }
+
+  // RAID 5
+  int parity_disk=slot%5;
+  char parity_block[BSIZE];
+  memset(parity_block,0,BSIZE);
+
+  for(int i=0;i<4;i++){
+    int disk_id=i;
+    if(disk_id>=parity_disk){
+      disk_id++;
+    }
+    int physical_block=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+slot;
+
+    struct buf *buf =bread(1,physical_block);
+    memmove(buf->data,page_data+(i*BSIZE),BSIZE);
+    bwrite(buf);
+    brelse(buf);
+    for(int j=0;j<BSIZE;j++){
+      parity_block[j]^=(page_data+(i*BSIZE))[j];
+    }
+  }
+  int parity_physical_block=SWAP_START_BLOCK+(parity_disk*VDISK_SIZE)+slot;
+  struct buf *pbuf =bread(1,parity_physical_block);
+  memmove(pbuf->data,parity_block,BSIZE);
+  bwrite(pbuf);
+  brelse(pbuf);
+  return slot;
 }
-//when a page is swapped in we shold find free fame for the page
-// if not found we evict the page
+// OLD VERSION PA-3
+// when a frame gets evicted we need to find a frees slot in the swap table
+// to store the page
+// int swap_out(struct proc *owner, uint64 va, char *page_data){
+//   acquire(&swap_table.lock);
+//   for(int i=0;i<MAX_SWAP_PAGES;i++){
+//     if(swap_table.slots[i].in_use==0){
+//       swap_table.slots[i].in_use=1;
+//       swap_table.slots[i].owner = owner;
+//       swap_table.slots[i].va = va;
+
+//       // copy the page data
+//       memmove(swap_table.slots[i].page,page_data,PGSIZE);
+//       release(&swap_table.lock);
+//       return i;// swap index
+//     }
+//   }
+
+//   release(&swap_table.lock);
+//   panic("Swap space full"); // if no space is left
+
+//   return -1;
+// }
+
 int swap_in(struct proc *owner,uint64 va,char *target_page_data){
   acquire(&swap_table.lock);
+  int slot =-1;
   for(int i=0;i<MAX_SWAP_PAGES;i++){
     if(swap_table.slots[i].in_use==1&&swap_table.slots[i].owner ==owner&&swap_table.slots[i].va==va){
-      // copy the data
-      memmove(target_page_data,swap_table.slots[i].page,PGSIZE);
-      //free up the swap_slot
+      slot =i;
+      //free up the swap table
       swap_table.slots[i].in_use=0;
       swap_table.slots[i].owner=0;
       swap_table.slots[i].va=0;
-
-      release(&swap_table.lock);
-      return 1;//found
+      break;
     }
+
   }
   release(&swap_table.lock);
-  return 0;// not found
+  if(slot==-1){
+    return 0;//not found
+  }
+
+  //RAID 0
+  // int start_logical_block=slot*4;
+  // for(int i=0;i<4;i++){
+  //   int b =start_logical_block+i;
+  //   int disk_id=b%4;
+  //   int disk_block=b/4;
+  //   int physical_block=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+disk_block;
+
+  //   struct buf *buf =bread(1,physical_block);
+  //   memmove(target_page_data+(i*BSIZE),buf->data,BSIZE);
+  //   brelse(buf);
+  // }
+
+  //RAID 5
+  int parity_disk=slot%5;
+  int missing_data_idx=-1;
+  for(int i=0;i<4;i++){
+    int disk_id=i;
+    if(disk_id>=parity_disk){
+      disk_id++;
+    }
+
+    if(disk_id==simulated_failed_disk){
+      missing_data_idx=i;
+      continue;
+    }
+
+    int physical_block=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+slot;
+    struct buf *buf =bread(1,physical_block);
+    memmove(target_page_data+(i*BSIZE),buf->data,BSIZE);
+    brelse(buf);
+  }
+  //we resconstruct the data if failed disk is found
+  if(missing_data_idx!=-1){
+    int parity_physical_block=SWAP_START_BLOCK+(parity_disk*VDISK_SIZE)+slot;
+    struct buf *pbuf=bread(1,parity_physical_block);
+    char parity_content[BSIZE];
+    memmove(parity_content,pbuf->data,BSIZE);
+    brelse(pbuf);
+
+    for(int i=0;i<BSIZE;i++){
+      for(int j=0;j<4;j++){
+        if(j!=missing_data_idx){
+          parity_content[i]^=(target_page_data+(j*BSIZE))[i];
+        }
+      }
+      (target_page_data+(missing_data_idx*BSIZE))[i]=parity_content[i];
+
+    }
+  }
+  return 1;
 }
+
+// OLD VERSION PA3
+//when a page is swapped in we shold find free fame for the page
+// if not found we evict the page
+// int swap_in(struct proc *owner,uint64 va,char *target_page_data){
+//   acquire(&swap_table.lock);
+//   for(int i=0;i<MAX_SWAP_PAGES;i++){
+//     if(swap_table.slots[i].in_use==1&&swap_table.slots[i].owner ==owner&&swap_table.slots[i].va==va){
+//       // copy the data
+//       memmove(target_page_data,swap_table.slots[i].page,PGSIZE);
+//       //free up the swap_slot
+//       swap_table.slots[i].in_use=0;
+//       swap_table.slots[i].owner=0;
+//       swap_table.slots[i].va=0;
+
+//       release(&swap_table.lock);
+//       return 1;//found
+//     }
+//   }
+//   release(&swap_table.lock);
+//   return 0;// not found
+// }
 
 // when a process exits free up the swap slots
 void free_process_swap(struct proc *owner){
@@ -290,8 +434,12 @@ void* evict_frame(){
 
   // clear from cpu TLB cache
   sfence_vma();
+  release(&frame_table.lock);
+
   // dump the page to swap table
   swap_out(owner,va,(char *)pa);
+
+  acquire(&frame_table.lock);
 
   // update stats
   owner->pages_evicted++;
@@ -312,21 +460,88 @@ void* evict_frame(){
   return (void*)pa;
 }
 
-int swap_read(struct proc *owner, uint64 va, char *target_page_data){
+
+int swap_read(struct proc *owner,uint64 va,char *target_page_data){
   acquire(&swap_table.lock);
+  int slot =-1;
   for(int i=0;i<MAX_SWAP_PAGES;i++){
-
-
-    
     if(swap_table.slots[i].in_use==1&&swap_table.slots[i].owner==owner&&swap_table.slots[i].va==va){
-
-      memmove(target_page_data,swap_table.slots[i].page,PGSIZE);
-      release(&swap_table.lock);
-    
-      return 1;//found
+      slot = i;
+      break;
     }
-
   }
   release(&swap_table.lock);
-  return 0;//not found
+
+  if(slot==-1){
+    return 0;//not found
+  }
+
+  // int start_logical_block=slot*4;
+  // for(int i=0;i<4;i++){
+  //   int b=start_logical_block+i;
+  //   int disk_id=b%4;
+  //   int disk_block=b/4;
+  //   int physical_block=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+disk_block;
+
+  //   struct buf *buf =bread(1,physical_block);
+  //   memmove(target_page_data+(i*BSIZE),buf->data,BSIZE);
+  //   brelse(buf);
+  // }
+  //RAID 5
+  int parity_disk=slot%5;
+  int missing_data_idx=-1;
+  for(int i=0;i<4;i++){
+    int disk_id=i;
+    if(disk_id>=parity_disk){
+      disk_id++;
+    }
+
+    if(disk_id==simulated_failed_disk){
+      missing_data_idx=i;
+      continue;
+    }
+
+    int physical_block=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+slot;
+    struct buf *buf =bread(1,physical_block);
+    memmove(target_page_data+(i*BSIZE),buf->data,BSIZE);
+    brelse(buf);
+  }
+  //we resconstruct the data if failed disk is found
+  if(missing_data_idx!=-1){
+    int parity_physical_block=SWAP_START_BLOCK+(parity_disk*VDISK_SIZE)+slot;
+    struct buf *pbuf=bread(1,parity_physical_block);
+    char parity_content[BSIZE];
+    memmove(parity_content,pbuf->data,BSIZE);
+    brelse(pbuf);
+
+    for(int i=0;i<BSIZE;i++){
+      for(int j=0;j<4;j++){
+        if(j!=missing_data_idx){
+          parity_content[i]^=(target_page_data+(j*BSIZE))[i];
+        }
+      }
+      (target_page_data+(missing_data_idx*BSIZE))[i]=parity_content[i];
+
+    }
+  }
+  return 1;
 }
+// OLD VERSION PA3
+// int swap_read(struct proc *owner, uint64 va, char *target_page_data){
+//   acquire(&swap_table.lock);
+//   for(int i=0;i<MAX_SWAP_PAGES;i++){
+
+
+    
+//     if(swap_table.slots[i].in_use==1&&swap_table.slots[i].owner==owner&&swap_table.slots[i].va==va){
+
+//       memmove(target_page_data,swap_table.slots[i].page,PGSIZE);
+//       release(&swap_table.lock);
+    
+//       return 1;//found
+//     }
+
+//   }
+//   release(&swap_table.lock);
+//   return 0;//not found
+// }

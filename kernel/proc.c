@@ -149,6 +149,11 @@ found:
   p->pages_swapped_in=0;
   p->pages_swapped_out=0;
 
+  //PA4
+  p->disk_reads=0;
+  p->disk_writes =0;
+  p->total_disk_latency=0;
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -294,11 +299,13 @@ kfork(void)
   if((np = allocproc()) == 0){
     return -1;
   }
+  release(&np->lock);
 
   p->num_children+=1;//incrementing the alive children of a process
 
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz,np) < 0){
+    acquire(&np->lock);
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -321,8 +328,7 @@ kfork(void)
 
   pid = np->pid;
 
-  release(&np->lock);
-
+  // release(&np->lock);
   acquire(&wait_lock);
   np->parent = p;
   release(&wait_lock);
