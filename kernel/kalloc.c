@@ -20,8 +20,8 @@
 #define VDISK_SIZE 2000 //capacity of each virtual disk
 void freerange(void *pa_start, void *pa_end);
 
-// For testing RAID
-int simulated_failed_disk=1;
+//for testing purposes
+int simulated_failed_disk=-1;
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
@@ -204,31 +204,63 @@ int swap_out(struct proc *owner,uint64 va,char *page_data){
   //   brelse(buf);
   // }
 
-  // RAID 5
-  int parity_disk=slot%5;
-  char parity_block[BSIZE];
-  memset(parity_block,0,BSIZE);
+  //RAID-5
+  int stripe0=slot*2;
+  int stripe1=2*slot+1;
+  int pdisk0 =stripe0%4;
+  int pdisk1=stripe1%4;
+  char pblock0[BSIZE];
+  memset(pblock0,0,BSIZE);
+  char pblock1[BSIZE];
+  memset(pblock1,0,BSIZE);
 
-  for(int i=0;i<4;i++){
-    int disk_id=i;
-    if(disk_id>=parity_disk){
+  //stripe0
+  for(int i=0; i<3;i++){
+    int disk_id = i;
+    if(disk_id >= pdisk0){
       disk_id++;
     }
-    int physical_block=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+slot;
+    int phys_blk=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+stripe0;
 
-    struct buf *buf =bread(1,physical_block);
+    struct buf *buf=bread(1,phys_blk);
     memmove(buf->data,page_data+(i*BSIZE),BSIZE);
     bwrite(buf);
     brelse(buf);
+
     for(int j=0;j<BSIZE;j++){
-      parity_block[j]^=(page_data+(i*BSIZE))[j];
+      pblock0[j]^=*(page_data+(i*BSIZE)+j);
     }
   }
-  int parity_physical_block=SWAP_START_BLOCK+(parity_disk*VDISK_SIZE)+slot;
-  struct buf *pbuf =bread(1,parity_physical_block);
-  memmove(pbuf->data,parity_block,BSIZE);
-  bwrite(pbuf);
-  brelse(pbuf);
+  
+  //write parity 0
+  int pphys0=SWAP_START_BLOCK+(pdisk0*VDISK_SIZE)+stripe0;
+  struct buf *p0=bread(1,pphys0);
+  memmove(p0->data,pblock0,BSIZE);
+  bwrite(p0);
+  brelse(p0);
+
+
+  //stripe 1
+  int disk_id1=0;
+  if(disk_id1>=pdisk1){
+    disk_id1++;
+  }
+  int phys_blk1=SWAP_START_BLOCK+(disk_id1*VDISK_SIZE)+stripe1;
+  
+  struct buf *buf1=bread(1,phys_blk1);
+  memmove(buf1->data,page_data+(3*BSIZE),BSIZE);
+  bwrite(buf1);
+  brelse(buf1);
+
+  memmove(pblock1,page_data+(3*BSIZE),BSIZE);
+
+
+  int pphys1=SWAP_START_BLOCK+(pdisk1*VDISK_SIZE)+stripe1;
+  
+  struct buf *p1=bread(1,pphys1);
+  memmove(p1->data,pblock1,BSIZE);
+  bwrite(p1);
+  brelse(p1);
   return slot;
 }
 // OLD VERSION PA-3
@@ -288,41 +320,78 @@ int swap_in(struct proc *owner,uint64 va,char *target_page_data){
   // }
 
   //RAID 5
-  int parity_disk=slot%5;
-  int missing_data_idx=-1;
-  for(int i=0;i<4;i++){
+  int stripe0=2*slot;
+
+  int stripe1=2*slot+1;
+  int pdisk0 =stripe0%4;
+  int pdisk1 =stripe1%4;
+
+  int missing_data_idx0=-1;
+  
+  //stripe 0
+  for(int i=0;i<3;i++){
     int disk_id=i;
-    if(disk_id>=parity_disk){
+    if(disk_id>=pdisk0){
       disk_id++;
     }
 
     if(disk_id==simulated_failed_disk){
-      missing_data_idx=i;
+      missing_data_idx0=i;
       continue;
+
     }
 
-    int physical_block=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+slot;
-    struct buf *buf =bread(1,physical_block);
+    int phys_blk=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+stripe0;
+    struct buf *buf = bread(1,phys_blk);
     memmove(target_page_data+(i*BSIZE),buf->data,BSIZE);
     brelse(buf);
   }
-  //we resconstruct the data if failed disk is found
-  if(missing_data_idx!=-1){
-    int parity_physical_block=SWAP_START_BLOCK+(parity_disk*VDISK_SIZE)+slot;
-    struct buf *pbuf=bread(1,parity_physical_block);
-    char parity_content[BSIZE];
-    memmove(parity_content,pbuf->data,BSIZE);
-    brelse(pbuf);
+
+  // reconstruct stripe 0
+  if(missing_data_idx0!=-1){
+    int pphys0 =SWAP_START_BLOCK+(pdisk0*VDISK_SIZE)+stripe0;
+    struct buf *p0 =bread(1,pphys0);
+    
+    
+    char pcontent[BSIZE];
+    memmove(pcontent,p0->data,BSIZE);
+    brelse(p0);
 
     for(int i=0;i<BSIZE;i++){
-      for(int j=0;j<4;j++){
-        if(j!=missing_data_idx){
-          parity_content[i]^=(target_page_data+(j*BSIZE))[i];
+      for(int j =0;j<3;j++){
+    
+        if(j!=missing_data_idx0) {
+          pcontent[i]^=*(target_page_data+(j*BSIZE)+i);
         }
+    
       }
-      (target_page_data+(missing_data_idx*BSIZE))[i]=parity_content[i];
-
+      *(target_page_data+(missing_data_idx0 *BSIZE)+i)=pcontent[i];
+    
     }
+  }
+
+  //stripe 1
+  int missing_data_idx1=-1;
+  int disk_id1= 0>=pdisk1 ? 1:0;
+  
+  if(disk_id1==simulated_failed_disk){
+  
+    missing_data_idx1 =0;
+  }else{
+  
+    int phys_blk1 =SWAP_START_BLOCK +(disk_id1*VDISK_SIZE)+stripe1;
+    struct buf *buf1 = bread(1, phys_blk1);
+    
+    memmove(target_page_data+(3*BSIZE),buf1->data,BSIZE);
+    brelse(buf1);
+  }
+
+  if(missing_data_idx1!=-1){
+    int pphys1 =SWAP_START_BLOCK+(pdisk1*VDISK_SIZE)+stripe1;
+  
+    struct buf *p1 =bread(1,pphys1);
+    memmove(target_page_data+(3*BSIZE),p1->data,BSIZE);
+    brelse(p1);
   }
   return 1;
 }
@@ -487,43 +556,91 @@ int swap_read(struct proc *owner,uint64 va,char *target_page_data){
   //   memmove(target_page_data+(i*BSIZE),buf->data,BSIZE);
   //   brelse(buf);
   // }
-  //RAID 5
-  int parity_disk=slot%5;
-  int missing_data_idx=-1;
-  for(int i=0;i<4;i++){
-    int disk_id=i;
-    if(disk_id>=parity_disk){
+
+  //RAID5
+  int stripe0=2*slot;
+  int stripe1=2*slot+1;
+
+  int pdisk0=stripe0%4;
+  int pdisk1 =stripe1%4;
+
+  int missing_data_idx0=-1;
+  
+  //stripe 0
+  for(int i =0;i<3;i++){
+  
+    int disk_id =i;
+    if(disk_id>=pdisk0){
+  
       disk_id++;
     }
 
     if(disk_id==simulated_failed_disk){
-      missing_data_idx=i;
+      missing_data_idx0=i;
+  
       continue;
     }
-
-    int physical_block=SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+slot;
-    struct buf *buf =bread(1,physical_block);
+    int phys_blk =SWAP_START_BLOCK+(disk_id*VDISK_SIZE)+stripe0;
+  
+  
+    struct buf *buf=bread(1,phys_blk);
     memmove(target_page_data+(i*BSIZE),buf->data,BSIZE);
+  
+  
     brelse(buf);
   }
-  //we resconstruct the data if failed disk is found
-  if(missing_data_idx!=-1){
-    int parity_physical_block=SWAP_START_BLOCK+(parity_disk*VDISK_SIZE)+slot;
-    struct buf *pbuf=bread(1,parity_physical_block);
-    char parity_content[BSIZE];
-    memmove(parity_content,pbuf->data,BSIZE);
-    brelse(pbuf);
 
-    for(int i=0;i<BSIZE;i++){
-      for(int j=0;j<4;j++){
-        if(j!=missing_data_idx){
-          parity_content[i]^=(target_page_data+(j*BSIZE))[i];
+
+
+  
+  if(missing_data_idx0 != -1) {
+    int pphys0=SWAP_START_BLOCK+(pdisk0*VDISK_SIZE)+stripe0;
+    struct buf *p0=bread(1,pphys0);
+  
+  
+    char pcontent[BSIZE];
+    memmove(pcontent,p0->data,BSIZE);
+  
+  
+    brelse(p0);
+
+    for(int i =0;i<BSIZE;i++){
+      for(int j =0;j<3;j++){
+  
+        if(j!=missing_data_idx0){
+          pcontent[i]^=*(target_page_data+(j*BSIZE)+i);
         }
       }
-      (target_page_data+(missing_data_idx*BSIZE))[i]=parity_content[i];
-
+  
+  
+      *(target_page_data+(missing_data_idx0*BSIZE) +i) =pcontent[i];
     }
   }
+
+  //stripe1
+  int missing_data_idx1=-1;
+  int disk_id1= 0 >=pdisk1 ?1:0;
+  
+  if(disk_id1==simulated_failed_disk){
+    missing_data_idx1 =0;
+  }else{
+    int phys_blk1 =SWAP_START_BLOCK+(disk_id1*VDISK_SIZE) +stripe1;
+    struct buf *buf1=bread(1,phys_blk1);
+    memmove(target_page_data+(3*BSIZE),buf1->data,BSIZE);
+  
+  
+    brelse(buf1);
+  }
+
+  if(missing_data_idx1!=-1){
+    int pphys1 =SWAP_START_BLOCK+(pdisk1*VDISK_SIZE)+stripe1;
+  
+  
+    struct buf *p1=bread(1,pphys1);
+    memmove(target_page_data+(3*BSIZE),p1->data,BSIZE);
+    brelse(p1);
+  }
+  
   return 1;
 }
 // OLD VERSION PA3

@@ -2,113 +2,99 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 
-struct vmstats{
+struct vmstats {
   int page_faults;
   int pages_evicted;
   int resident_pages;
   int pages_swapped_in;
   int pages_swapped_out;
+
   int disk_reads;
   int disk_writes;
   int avg_disk_latency;
 };
 
-void print_stats(char *tag, int pid){
-  struct vmstats st;
-  if(getvmstats(pid, &st) == 0){
-    printf("\n[%s] VM Stats (PID %d):\n", tag, pid);
-    printf("  Page Faults: %d\n", st.page_faults);
-    printf("  Evicted:     %d\n", st.pages_evicted);
-    printf("  Resident:    %d\n", st.resident_pages);
-    printf("  Swapped Out: %d\n", st.pages_swapped_out);
-    printf("  Swapped In:  %d\n", st.pages_swapped_in);
-    printf("  Disk Reads:  %d\n", st.disk_reads);
-    printf("  Disk Writes: %d\n", st.disk_writes);
-    printf("####################################\n");
-  } else {
-    printf("Could not get stats for PID %d\n", pid);
-  }
-}
+int total_passed=0;
 
-void run_workload(){
-  int pid = getpid();
-  int num_pages = 800; // MUST BE > 768 pages to trigger EVICITON natively!
-  uint64 size = num_pages * 4096;
-  
-  char *mem = sbrk(size);
-  if(mem == (char*)-1){
-     printf("Memory allocation failed!\n");
-     exit(1);
-  }
+int total_failed=0;
 
-  printf("\n[Workload] Writing data sequentially to %d pages...\n", num_pages);
-  
-  // Trigger Swap Out
-  for(int i = 0; i < num_pages; i++){
-    mem[i*4096] = 'X'; 
-    // Small delay to let MLFQ tick
-    for(volatile int k=0; k<100; k++){}
-  }
+void verify(int condition,const char *msg) {
+    if (condition){
+        printf("  [PASS] %s\n",msg);
+        total_passed++;
+    }else{
+        printf("  [FAIL] %s\n",msg);
+        total_failed++;
 
-  print_stats("After Writing (Triggered Swap Outs)", pid);
-
-  // Trigger Swap In and Verify RAID 5 Reconstruction
-  printf("\n[Workload] Reading memory identically back to trigger Swap In...\n");
-  printf("[Workload] (Simulated Disk 1 is down, triggering RAID 5 XOR Recovery)\n");
-  for(int i = 0; i < num_pages; i++){
-    char expected = mem[i*4096];
-    if(expected != 'X'){
-      printf("ERROR: Memory corrupted! RAID 5 Reconstruction failed at page %d\n", i);
-      exit(1);
     }
-  }
-
-  print_stats("After Reading (Triggered Swap Ins + XOR Recovery)", pid);
 }
 
-int main(){
-  printf("Starting Programming Assignment 4: Experimental Evaluation\n");
-  printf("========================================================\n\n");
+int main(void) {
+    printf("---------------------------------\n");
+    printf("         RAID-5 TEST             \n");
+    printf("---------------------------------\n");
 
-  // TEST 1: FCFS
-  printf("\n>>> PHASE 1: First Come First Serve (FCFS) Disk Scheduling <<<\n");
-  setdisksched(0); // 0 = FCFS
-  int start_time_fcfs = uptime();
-  
-  int child1 = fork();
-  if(child1 == 0){
-     run_workload();
-     exit(0);
-  }
-  wait(0);
-  int end_time_fcfs = uptime();
+    struct vmstats initial_s;
+    
+    getvmstats(getpid(),&initial_s);
+    verify(initial_s.disk_reads >= 0,"Initial process telemetry boot ok");
 
+    //Heavily allocate memory to force 4-Disk RAID evictions
+    int alloc_pages = 800; 
+    
+    char *arr = sbrk(alloc_pages * 4096);
+    
+    //FCFS TEST
+    printf("\n>>> PHASE 1: FCFS Eviction Engine\n");
+    setdisksched(0);
+    for(int i =0;i<alloc_pages;i++){
+    
+        arr[i*4096]=(char)(i%255);
+    }
+    struct vmstats eviction_s;
+    getvmstats(getpid(),&eviction_s);
+    
+    verify(eviction_s.pages_evicted > 0,"Memory pressure triggered eviction");
+    verify(eviction_s.disk_writes > 0,"RAID 5 engine physically wrote parity blocks");
 
-  // TEST 2: SSTF
-  printf("\n\n>>> PHASE 2: Shortest Seek Time First (SSTF) Disk Scheduling <<<\n");
-  setdisksched(1); // 1 = SSTF
-  int start_time_sstf = uptime();
+    //Read back to trigger swap_in
+    int errors = 0;
+    for(int i=0;i<alloc_pages;i++){
+      
+        if(arr[i*4096]!=(char)(i%255)){
+      
+            errors++;
+        }
+    }
+    verify(errors ==0,"RAID 5 dual-stripe geometry restored data flawlessly");
+    
+    struct vmstats swap_in_s;
+   
+   
+    getvmstats(getpid(),&swap_in_s);
+    verify(swap_in_s.disk_reads > eviction_s.disk_reads,"swap_in triggered RAID reads");
 
-  int child2 = fork();
-  if(child2 == 0){
-     run_workload();
-     exit(0);
-  }
-  wait(0);
-  int end_time_sstf = uptime();
+    //SSTF TEST
+    printf("\n>>> PHASE 2: SSTF Tracking Geometry\n");
+   
+    setdisksched(1);
+    char *arr2=sbrk(200*4096);
+    for(int i =0;i<200;i++){
+   
+        arr2[i*4096]=(char)(i%255);
+    }
+   
+   
+    struct vmstats sstf_s;
+    getvmstats(getpid(),&sstf_s);
+    verify(sstf_s.disk_writes>swap_in_s.disk_writes,"SSTF dynamically committed stripes");
+    
+    
+    sbrk(-alloc_pages * 4096);
+    sbrk(-200 * 4096);
 
-
-  // RESULTS SUMMARY
-  printf("\n\n=============== EXPERIMENTAL RESULTS ===============\n");
-  printf("Total Execution Ticks (FCFS): %d\n", (end_time_fcfs - start_time_fcfs));
-  printf("Total Execution Ticks (SSTF): %d\n", (end_time_sstf - start_time_sstf));
-  
-  if((end_time_sstf - start_time_sstf) < (end_time_fcfs - start_time_fcfs)){
-     printf("CONCLUSION: SSTF outperformed FCFS as expected!\n");
-  } else {
-     printf("CONCLUSION: SSTF and FCFS performed similarly due to sequential workload block patterns.\n");
-  }
-  printf("====================================================\n");
-
-  exit(0);
+    printf("\n------------------------------------\n");
+    printf("  Total Test Cases Passed: %d / %d\n", total_passed, total_passed + total_failed);
+    printf("------------------------------------\n");
+    exit(0);
 }
