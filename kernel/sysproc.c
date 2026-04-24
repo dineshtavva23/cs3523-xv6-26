@@ -299,3 +299,44 @@ sys_setdisksched(void){
   disk_sched_policy= policy;
   return 0;
 }
+
+uint64
+sys_getdiskstats(void){
+  int pid;
+  uint64 addr;
+
+  argint(0,&pid);
+  argaddr(1,&addr);
+
+  struct proc *p;
+  struct proc *candidate =0;
+
+  for(p=proc;p<&proc[NPROC];p++){
+    acquire(&p->lock);
+    if(pid==p->pid&&p->state!=UNUSED){
+      candidate=p;
+      break;
+    }
+    release(&p->lock);
+  }
+  if(candidate==0){
+    return -1;
+  }
+  struct diskstats stats;
+  memset(&stats, 0,sizeof(stats));
+  
+  // PA 4 stats
+  stats.disk_reads =candidate->disk_reads;
+  stats.disk_writes =candidate->disk_writes;
+  if(candidate->disk_reads+candidate->disk_writes>0){
+    stats.avg_disk_latency =candidate->total_disk_latency/(candidate->disk_reads+candidate->disk_writes);
+  }else{
+    stats.avg_disk_latency =0;
+  }
+
+  release(&candidate->lock);
+  if(copyout(myproc()->pagetable,addr,(char *)&stats,sizeof(stats))<0){
+    return -1;
+  }
+  return 0;
+}

@@ -3,6 +3,7 @@
 struct stat;
 struct mlfqinfo;
 struct vmstats;
+struct diskstats;
 
 // system calls
 int fork(void);

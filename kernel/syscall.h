@@ -30,3 +30,4 @@
 #define SYS_getmlfqinfo 29
 #define SYS_getvmstats 30
 #define SYS_setdisksched 31
+#define SYS_getdiskstats 32

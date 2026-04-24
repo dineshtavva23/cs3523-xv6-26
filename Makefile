@@ -156,6 +156,11 @@ UPROGS=\
 	$U/_PA2_3\
 	$U/_test_PA3\
 	$U/_test_PA4\
+	$U/_pa_stress\
+	$U/_diskschedtest\
+	$U/_statstest\
+	$U/_swaptest\
+	$U/_raidtest\
 
 
 

@@ -139,3 +139,10 @@ struct vmstats{
   int disk_writes;
   int avg_disk_latency;
 };
+
+
+struct diskstats{
+  int disk_reads;
+  int disk_writes;
+  int avg_disk_latency;
+};

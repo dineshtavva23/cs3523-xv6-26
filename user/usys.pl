@@ -52,3 +52,4 @@ entry("getlevel");
 entry("getmlfqinfo");
 entry("getvmstats");
 entry("setdisksched");
+entry("getdiskstats");
